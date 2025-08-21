@@ -158,61 +158,18 @@
 
         <script>
             (function () {
-                const UI =
-                    typeof document !== "undefined" && document.getElementById
-                        ? {
-                              set(payload) {
-                                  const s = document.getElementById("status");
-                                  const sub = document.getElementById("sub");
-                                  const vUpside =
-                                      document.getElementById("vUpside");
-                                  const vMethod =
-                                      document.getElementById("vMethod");
-                                  const vX = document.getElementById("vX");
-                                  const vY = document.getElementById("vY");
-                                  const vZ = document.getElementById("vZ");
-                                  if (!s) return;
-                                  s.textContent = payload.is_upside_down
-                                      ? "Upside Down"
-                                      : "Normal";
-                                  s.className =
-                                      "status " +
-                                      (payload.is_upside_down ? "bad" : "ok");
-                                  if (sub)
-                                      sub.textContent =
-                                          "Detected via accelerometer";
-                                  if (vUpside)
-                                      vUpside.textContent = String(
-                                          payload.is_upside_down,
-                                      );
-                                  if (vMethod)
-                                      vMethod.textContent = "accelerometer";
-                                  if (vX)
-                                      vX.textContent =
-                                          payload.accel_x.toFixed(2);
-                                  if (vY)
-                                      vY.textContent =
-                                          payload.accel_y.toFixed(2);
-                                  if (vZ)
-                                      vZ.textContent =
-                                          payload.accel_z.toFixed(2);
-                              },
-                              needPerm() {
-                                  const s = document.getElementById("status");
-                                  const sub = document.getElementById("sub");
-                                  if (s) {
-                                      s.textContent = "Permission needed";
-                                      s.className = "status";
-                                  }
-                                  if (sub)
-                                      sub.textContent =
-                                          "Enable motion access and rotate your phone.";
-                              },
-                          }
-                        : { set() {}, needPerm() {} };
+                const $ = (id) => document.getElementById(id);
+                const statusEl = $("status"),
+                    subEl = $("sub"),
+                    btn = $("permBtn");
+                const vUpside = $("vUpside"),
+                    vMethod = $("vMethod"),
+                    vType = $("vType"),
+                    vAngle = $("vAngle"),
+                    vX = $("vX"),
+                    vY = $("vY"),
+                    vZ = $("vZ");
 
-                // --- Android: no special permission API, but site-level "Motion sensors" must be allowed.
-                // We'll still keep the iOS check so this works cross-platform.
                 function needsIOSPermission() {
                     return (
                         typeof DeviceMotionEvent !== "undefined" &&
@@ -232,62 +189,125 @@
                     }
                 }
 
-                // Auto-calibration: learn which sign means "upright" on this device
-                let baselineY = null; // average Y during first second
-                let samples = 0;
-                const CALIBRATION_MS = 1000;
-                let startTime = Date.now();
-
-                // Thresholds
-                const MAG_MIN = 4.0; // magnitude gate to ensure we’re really portraitish
-                const FLIP_DELTA = 6.0; // how far from baseline to call it flipped
-
-                let lastRender = 0;
-                function maybeRender(p) {
-                    const now = Date.now();
-                    if (now - lastRender > 120) {
-                        lastRender = now;
-                        UI.set(p);
+                function readScreenOrientation() {
+                    try {
+                        const type =
+                            (screen.orientation && screen.orientation.type) ||
+                            "";
+                        let angle =
+                            screen.orientation && screen.orientation.angle;
+                        if (typeof angle === "undefined")
+                            angle = window.orientation || 0; // legacy
+                        return {
+                            type,
+                            angle: Number(angle) || 0,
+                            isUpside:
+                                type.includes("portrait-secondary") ||
+                                angle === 180 ||
+                                angle === -180,
+                        };
+                    } catch {
+                        return { type: "", angle: 0, isUpside: null };
                     }
                 }
 
-                function decideUpside(y, x) {
-                    // If we couldn't calibrate yet, use sign-based heuristic
+                // --- accelerometer-first decision with quick baseline ---
+                let baselineY = null,
+                    samples = 0;
+                const CAL_MS = 1000,
+                    MAG_MIN = 4.0,
+                    FLIP_DELTA = 6.0;
+                const t0 = Date.now();
+
+                function decideUpsideFromAccel(y, x) {
                     const portraitish =
                         Math.abs(y) > Math.abs(x) && Math.abs(y) > MAG_MIN;
-                    if (!portraitish) return false;
-
-                    if (baselineY == null) {
-                        // Heuristic before baseline: most Androids report upright ≈ +9 or −9; treat "more negative than −T" as upside.
-                        return y < -MAG_MIN;
-                    }
-                    // Upside if we’ve crossed to the other side of baseline by a healthy margin
+                    if (!portraitish) return null; // not confident — let caller decide fallback
+                    if (baselineY == null) return y < -MAG_MIN; // pre-baseline heuristic
                     return baselineY > 0
                         ? y < baselineY - FLIP_DELTA
                         : y > baselineY + FLIP_DELTA;
                 }
 
-                ensurePermission().then(function (granted) {
+                let last = 0;
+                function render(payload) {
+                    const {
+                        is_upside_down,
+                        method,
+                        orientation_type,
+                        orientation_angle,
+                        accel_x,
+                        accel_y,
+                        accel_z,
+                    } = payload;
+                    statusEl.textContent = is_upside_down
+                        ? "Upside Down"
+                        : "Normal";
+                    statusEl.className =
+                        "status " + (is_upside_down ? "bad" : "ok");
+                    subEl.textContent =
+                        method === "accelerometer"
+                            ? "Detected via accelerometer (screen values shown for reference)"
+                            : "Detected via Screen Orientation API";
+
+                    vUpside.textContent = String(is_upside_down);
+                    vMethod.textContent = method || "—";
+                    vType.textContent = orientation_type ?? "—";
+                    vAngle.textContent = orientation_angle ?? "—";
+                    if (accel_x != null) vX.textContent = accel_x.toFixed(2);
+                    if (accel_y != null) vY.textContent = accel_y.toFixed(2);
+                    if (accel_z != null) vZ.textContent = accel_z.toFixed(2);
+                }
+                function maybeRender(p) {
+                    const now = Date.now();
+                    if (now - last > 120) {
+                        last = now;
+                        render(p);
+                    }
+                }
+
+                async function start() {
+                    const granted = await ensurePermission();
                     if (!granted && needsIOSPermission()) {
-                        UI.needPerm();
+                        btn.style.display = "inline-block";
+                        statusEl.textContent = "Permission needed";
+                        statusEl.className = "status";
+                        subEl.textContent =
+                            "Tap the button to enable motion access.";
                         return;
                     }
+                    btn.style.display = "none";
+                    subEl.textContent = "Rotate your phone to test.";
+
+                    // Always show current screen type/angle on changes
+                    window.addEventListener("orientationchange", () => {
+                        const so = readScreenOrientation();
+                        // Do not change decision here; just refresh the card’s screen fields
+                        maybeRender({
+                            method: "accelerometer", // decision still accelerometer-first
+                            orientation_type: so.type,
+                            orientation_angle: so.angle,
+                            is_upside_down:
+                                typeof window.__lastUpside === "boolean"
+                                    ? window.__lastUpside
+                                    : false,
+                        });
+                    });
 
                     window.addEventListener(
                         "devicemotion",
-                        function (ev) {
+                        (ev) => {
                             const g = ev.accelerationIncludingGravity;
                             if (!g) return;
                             const x = g.x || 0,
                                 y = g.y || 0,
                                 z = g.z || 0;
 
-                            // Build baseline for ~1s
+                            // Build baseline for ~1s while roughly portrait
                             if (
                                 baselineY === null &&
-                                Date.now() - startTime < CALIBRATION_MS
+                                Date.now() - t0 < CAL_MS
                             ) {
-                                // only accumulate when portraitish to avoid sideways bias
                                 if (
                                     Math.abs(y) > Math.abs(x) &&
                                     Math.abs(y) > MAG_MIN
@@ -301,9 +321,25 @@
                                 }
                             }
 
-                            const isUpside = decideUpside(y, x);
+                            // Decision: accelerometer-first
+                            let isUpside = decideUpsideFromAccel(y, x);
+
+                            // If we cannot decide (e.g., not portraitish), fall back to screen orientation
+                            if (isUpside === null) {
+                                const so = readScreenOrientation();
+                                isUpside =
+                                    so.isUpside === null
+                                        ? false
+                                        : !!so.isUpside;
+                            }
+
+                            window.__lastUpside = !!isUpside;
+                            const soNow = readScreenOrientation();
 
                             maybeRender({
+                                method: "accelerometer",
+                                orientation_type: soNow.type,
+                                orientation_angle: soNow.angle,
                                 is_upside_down: !!isUpside,
                                 accel_x: x,
                                 accel_y: y,
@@ -312,7 +348,22 @@
                         },
                         { passive: true },
                     );
-                });
+
+                    // Initial paint
+                    const so0 = readScreenOrientation();
+                    maybeRender({
+                        method: "accelerometer",
+                        orientation_type: so0.type,
+                        orientation_angle: so0.angle,
+                        is_upside_down: false,
+                    });
+                }
+
+                document
+                    .getElementById("permBtn")
+                    ?.addEventListener("click", start);
+                if (document.readyState === "complete") start();
+                else window.addEventListener("load", start);
             })();
         </script>
     </body>

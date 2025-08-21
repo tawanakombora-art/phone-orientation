@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta
+            name="viewport"
+            content="width=device-width,initial-scale=1,viewport-fit=cover"
+        />
+        <title>Phone Upside-Down Detector</title>
+        <style>
+            :root {
+                --bg: #0b0b0c;
+                --fg: #f5f7fa;
+                --muted: #9aa3b2;
+                --ok: #10b981;
+                --bad: #ef4444;
+            }
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+                background: var(--bg);
+                color: var(--fg);
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    Segoe UI,
+                    Roboto,
+                    Inter,
+                    Arial,
+                    sans-serif;
+            }
+            .wrap {
+                min-height: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 24px;
+            }
+            .card {
+                width: min(720px, 92vw);
+                border-radius: 20px;
+                padding: 28px;
+                background: rgba(255, 255, 255, 0.05);
+                box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+                text-align: center;
+            }
+            .title {
+                font-size: 13px;
+                letter-spacing: 0.14em;
+                text-transform: uppercase;
+                color: var(--muted);
+                margin-bottom: 8px;
+            }
+            .status {
+                font-size: 48px;
+                font-weight: 800;
+                margin: 6px 0 10px;
+            }
+            .status.ok {
+                color: var(--ok);
+            }
+            .status.bad {
+                color: var(--bad);
+            }
+            .sub {
+                color: var(--muted);
+                margin-bottom: 18px;
+            }
+            .grid {
+                display: grid;
+                gap: 10px;
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            }
+            .kv {
+                background: rgba(255, 255, 255, 0.06);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+                padding: 12px;
+            }
+            .k {
+                font-size: 12px;
+                color: var(--muted);
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+            }
+            .v {
+                font-family: ui-monospace, Menlo, Consolas, monospace;
+                margin-top: 6px;
+            }
+            .btn {
+                margin-top: 16px;
+                padding: 12px 16px;
+                border-radius: 12px;
+                border: 0;
+                cursor: pointer;
+                background: #2563eb;
+                color: #fff;
+                font-weight: 700;
+            }
+            .note {
+                margin-top: 10px;
+                color: var(--muted);
+                font-size: 12px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="wrap">
+            <div class="card">
+                <div class="title">Orientation</div>
+                <div id="status" class="status">Waiting…</div>
+                <div id="sub" class="sub">
+                    Rotate your phone to test. On iPhone you may need to tap the
+                    button below.
+                </div>
+
+                <div class="grid">
+                    <div class="kv">
+                        <div class="k">Upside Down</div>
+                        <div class="v" id="vUpside">—</div>
+                    </div>
+                    <div class="kv">
+                        <div class="k">Method</div>
+                        <div class="v" id="vMethod">—</div>
+                    </div>
+                    <div class="kv">
+                        <div class="k">Screen Type</div>
+                        <div class="v" id="vType">—</div>
+                    </div>
+                    <div class="kv">
+                        <div class="k">Screen Angle</div>
+                        <div class="v" id="vAngle">—</div>
+                    </div>
+                    <div class="kv">
+                        <div class="k">Accel X</div>
+                        <div class="v" id="vX">—</div>
+                    </div>
+                    <div class="kv">
+                        <div class="k">Accel Y</div>
+                        <div class="v" id="vY">—</div>
+                    </div>
+                    <div class="kv">
+                        <div class="k">Accel Z</div>
+                        <div class="v" id="vZ">—</div>
+                    </div>
+                </div>
+
+                <button id="permBtn" class="btn" style="display: none">
+                    Enable motion access
+                </button>
+                <div class="note">
+                    Requires a mobile browser. Motion sensors usually need
+                    HTTPS.
+                </div>
+            </div>
+        </div>
+
+        <script>
+            (function () {
+                const $ = (id) => document.getElementById(id);
+                const statusEl = $("status"),
+                    subEl = $("sub"),
+                    btn = $("permBtn");
+                const vUpside = $("vUpside"),
+                    vMethod = $("vMethod"),
+                    vType = $("vType"),
+                    vAngle = $("vAngle"),
+                    vX = $("vX"),
+                    vY = $("vY"),
+                    vZ = $("vZ");
+
+                function needsIOSPermission() {
+                    return (
+                        typeof DeviceMotionEvent !== "undefined" &&
+                        typeof DeviceMotionEvent.requestPermission ===
+                            "function"
+                    );
+                }
+                async function ensurePermission() {
+                    if (!needsIOSPermission()) return true;
+                    try {
+                        return (
+                            (await DeviceMotionEvent.requestPermission()) ===
+                            "granted"
+                        );
+                    } catch {
+                        return false;
+                    }
+                }
+
+                function readScreenOrientation() {
+                    try {
+                        const type =
+                            (screen.orientation && screen.orientation.type) ||
+                            "";
+                        let angle =
+                            screen.orientation && screen.orientation.angle;
+                        if (typeof angle === "undefined")
+                            angle = window.orientation || 0;
+                        const isUpside =
+                            type.includes("portrait-secondary") ||
+                            angle === 180 ||
+                            angle === -180;
+                        return {
+                            method: "screen",
+                            type,
+                            angle: Number(angle) || 0,
+                            isUpside: !!isUpside,
+                        };
+                    } catch {
+                        return null;
+                    }
+                }
+
+                function render(p) {
+                    statusEl.textContent = p.is_upside_down
+                        ? "Upside Down"
+                        : "Normal";
+                    statusEl.className =
+                        "status " + (p.is_upside_down ? "bad" : "ok");
+                    subEl.textContent =
+                        p.method === "screen"
+                            ? "Detected via Screen Orientation API"
+                            : "Detected via accelerometer";
+                    vUpside.textContent = String(p.is_upside_down);
+                    vMethod.textContent = p.method || "—";
+                    vType.textContent = p.orientation_type ?? "—";
+                    vAngle.textContent = p.orientation_angle ?? "—";
+                    if (p.accel_x != null)
+                        vX.textContent = p.accel_x.toFixed(2);
+                    if (p.accel_y != null)
+                        vY.textContent = p.accel_y.toFixed(2);
+                    if (p.accel_z != null)
+                        vZ.textContent = p.accel_z.toFixed(2);
+                }
+
+                let last = 0;
+                function maybeRender(payload) {
+                    const now = Date.now();
+                    if (now - last > 120) {
+                        last = now;
+                        render(payload);
+                    }
+                }
+
+                async function start() {
+                    const granted = await ensurePermission();
+                    if (!granted && needsIOSPermission()) {
+                        btn.style.display = "inline-block";
+                        statusEl.textContent = "Permission needed";
+                        statusEl.className = "status";
+                        subEl.textContent =
+                            "Tap “Enable motion access”, then rotate your phone.";
+                        return;
+                    }
+                    btn.style.display = "none";
+                    subEl.textContent = "Rotate your phone to test.";
+
+                    // Initial read via Screen Orientation
+                    const so0 = readScreenOrientation();
+                    if (so0) {
+                        maybeRender({
+                            method: "screen",
+                            orientation_type: so0.type,
+                            orientation_angle: so0.angle,
+                            is_upside_down: so0.isUpside,
+                        });
+                    }
+
+                    window.addEventListener("orientationchange", () => {
+                        const so = readScreenOrientation();
+                        if (so) {
+                            maybeRender({
+                                method: "screen",
+                                orientation_type: so.type,
+                                orientation_angle: so.angle,
+                                is_upside_down: so.isUpside,
+                            });
+                        }
+                    });
+
+                    // Fallback: accelerometer
+                    window.addEventListener(
+                        "devicemotion",
+                        (ev) => {
+                            const g = ev.accelerationIncludingGravity;
+                            if (!g) return;
+                            const x = g.x || 0,
+                                y = g.y || 0,
+                                z = g.z || 0;
+                            const T = 4.0; // tolerance to reduce noise
+                            const portraitish =
+                                Math.abs(y) > Math.abs(x) && Math.abs(y) > T;
+                            const isUpsideFromAccel = portraitish && y < -T;
+                            const so = readScreenOrientation();
+                            const finalUpside = so
+                                ? so.isUpside
+                                : isUpsideFromAccel;
+
+                            maybeRender({
+                                method: so ? "screen" : "accelerometer",
+                                orientation_type: so ? so.type : null,
+                                orientation_angle: so ? so.angle : null,
+                                is_upside_down: !!finalUpside,
+                                accel_x: x,
+                                accel_y: y,
+                                accel_z: z,
+                            });
+                        },
+                        { passive: true },
+                    );
+                }
+
+                btn.addEventListener("click", start);
+                if (document.readyState === "complete") start();
+                else window.addEventListener("load", start);
+            })();
+        </script>
+    </body>
+</html>
